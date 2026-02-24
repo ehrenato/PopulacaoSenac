@@ -1,92 +1,74 @@
+"""
+Módulo responsável por carregar os dados da camada prata
+em um banco de dados SQLite para análise SQL.
+"""
+
+from pathlib import Path
 import sqlite3
 import pandas as pd
-from pathlib import Path
 
 
-PRATA_PATH = Path("data/prata")
+# ============================================================
+# CONFIGURAÇÕES
+# ============================================================
+
 DB_PATH = Path("database/analytics.db")
+PRATA_PATH = Path("data/prata")
 
 
-def load_parquet(filename: str) -> pd.DataFrame:
+# ============================================================
+# FUNÇÕES AUXILIARES
+# ============================================================
+
+def get_connection() -> sqlite3.Connection:
     """
-    Carrega um arquivo Parquet da camada prata.
+    Cria (ou reutiliza) conexão com o banco SQLite.
     """
-    return pd.read_parquet(PRATA_PATH / filename)
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    return sqlite3.connect(DB_PATH)
 
 
-def create_tables(conn: sqlite3.Connection) -> None:
-    """
-    Cria as tabelas analíticas no banco SQLite.
-    """
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS estados (
-            id_estado INTEGER PRIMARY KEY,
-            nome_estado TEXT,
-            sigla TEXT,
-            regiao TEXT
-        )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS municipios (
-            id_municipio INTEGER PRIMARY KEY,
-            nome_municipio TEXT,
-            id_estado INTEGER,
-            FOREIGN KEY (id_estado) REFERENCES estados (id_estado)
-        )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS populacao (
-            id_municipio INTEGER,
-            populacao INTEGER,
-            ano INTEGER,
-            PRIMARY KEY (id_municipio, ano),
-            FOREIGN KEY (id_municipio) REFERENCES municipios (id_municipio)
-        )
-    """)
-
-    conn.commit()
-
-
-def load_dataframe(
-    df: pd.DataFrame,
+def load_table(
+    conn: sqlite3.Connection,
     table_name: str,
-    conn: sqlite3.Connection
+    df: pd.DataFrame
 ) -> None:
     """
-    Carrega um DataFrame no banco SQLite substituindo dados existentes.
+    Carrega um DataFrame em uma tabela do SQLite.
+    Substitui a tabela caso já exista (reprocessamento seguro).
     """
     df.to_sql(
-        table_name,
-        conn,
+        name=table_name,
+        con=conn,
         if_exists="replace",
         index=False
     )
+
     print(f"Tabela '{table_name}' carregada com sucesso.")
 
 
-def run_load() -> None:
+# ============================================================
+# CARGA DAS TABELAS
+# ============================================================
+
+def run_load_sqlite() -> None:
     """
-    Executa o processo completo de carga no banco analítico.
+    Executa a carga da camada prata no banco SQLite.
     """
-    print("Iniciando carga no banco SQLite...")
+    print("Iniciando carga dos dados no SQLite...")
 
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = get_connection()
 
-    conn = sqlite3.connect(DB_PATH)
+    try:
+        estados = pd.read_parquet(PRATA_PATH / "estados.parquet")
+        municipios = pd.read_parquet(PRATA_PATH / "municipios.parquet")
+        populacao = pd.read_parquet(PRATA_PATH / "populacao.parquet")
 
-    create_tables(conn)
+        load_table(conn, "estados", estados)
+        load_table(conn, "municipios", municipios)
+        load_table(conn, "populacao", populacao)
 
-    estados = load_parquet("estados.parquet")
-    municipios = load_parquet("municipios.parquet")
-    populacao = load_parquet("populacao.parquet")
+    finally:
+        conn.close()
 
-    load_dataframe(estados, "estados", conn)
-    load_dataframe(municipios, "municipios", conn)
-    load_dataframe(populacao, "populacao", conn)
-
-    conn.close()
-    print("Carga finalizada com sucesso.")
+    print("Carga no SQLite finalizada com sucesso.")

@@ -1,83 +1,85 @@
-import pandas as pd
+"""
+Módulo responsável pela transformação dos dados
+da camada bronze para a camada prata.
+"""
+
 from pathlib import Path
+from typing import Optional, Dict, Any
+
+import pandas as pd
 
 
-BRONZE_PATH = Path("data/bronze")
-PRATA_PATH = Path("data/prata")
+# ============================================================
+# FUNÇÕES AUXILIARES
+# ============================================================
 
-def extract_id_estado(microrregiao: dict | None) -> int | None:
+def extract_id_estado(microrregiao: Optional[Dict[str, Any]]) -> Optional[int]:
     """
     Extrai o id do estado a partir da estrutura de microrregião.
-    Retorna None caso a estrutura esteja incompleta.
+    Retorna None caso a estrutura esteja ausente ou incompleta.
     """
+    if not isinstance(microrregiao, dict):
+        return None
+
     try:
         return microrregiao["mesorregiao"]["UF"]["id"]
-    except (TypeError, KeyError):
+    except KeyError:
         return None
 
 
-def load_parquet(filename: str) -> pd.DataFrame:
+def get_latest_partition(entity: str) -> Path:
     """
-    Carrega um arquivo Parquet da camada bronze.
-
-    Args:
-        filename (str): Nome do arquivo.
-
-    Returns:
-        pd.DataFrame: DataFrame carregado.
+    Retorna o caminho da partição mais recente da camada bronze
+    para uma determinada entidade.
     """
-    return pd.read_parquet(BRONZE_PATH / filename)
+    base_path = Path("data/bronze") / entity
+
+    partitions = sorted(base_path.glob("dt_extracao=*"))
+    if not partitions:
+        raise FileNotFoundError(f"Nenhuma partição encontrada para {entity}")
+
+    return partitions[-1]
 
 
-def save_parquet(df: pd.DataFrame, filename: str) -> None:
-    """
-    Salva um DataFrame em formato Parquet na camada prata.
-
-    Args:
-        df (pd.DataFrame): DataFrame a ser salvo.
-        filename (str): Nome do arquivo.
-    """
-    PRATA_PATH.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(PRATA_PATH / filename, index=False)
-    print(f"Arquivo transformado salvo em data/prata/{filename}")
-
+# ============================================================
+# TRANSFORMAÇÕES
+# ============================================================
 
 def transform_estados(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Transforma os dados brutos de estados.
-
-    Returns:
-        pd.DataFrame: Estados normalizados.
+    Transforma dados brutos de estados.
     """
-    estados = df[["id", "nome", "sigla", "regiao"]].copy()
+    estados = df.copy()
 
-    estados["regiao"] = estados["regiao"].apply(lambda x: x["nome"])
-    estados.rename(columns={
-        "id": "id_estado",
-        "nome": "nome_estado"
-    }, inplace=True)
+    estados = estados.rename(
+        columns={
+            "id": "id_estado",
+            "nome": "nome_estado",
+            "sigla": "sigla"
+        }
+    )
 
-    return estados.drop_duplicates()
+    estados["regiao"] = estados["regiao"].apply(
+        lambda x: x.get("nome") if isinstance(x, dict) else None
+    )
+
+    return estados[["id_estado", "nome_estado", "sigla", "regiao"]]
 
 
-def transform_municipios(municipios: pd.DataFrame) -> pd.DataFrame:
+def transform_municipios(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Transforma os dados de municípios, extraindo id do estado
-    e normalizando os campos principais.
+    Transforma dados brutos de municípios.
     """
+    municipios = df.copy()
 
-    municipios = municipios.copy()
-
-    # Criação da coluna id_estado
     municipios["id_estado"] = municipios["microrregiao"].apply(extract_id_estado)
 
-    #remover registros sem vínculo com estado
     municipios = municipios.dropna(subset=["id_estado"])
 
     municipios = municipios.rename(
         columns={
             "id": "id_municipio",
-            "nome": "nome_municipio",
+            "nome": "nome_municipio"
         }
     )
 
@@ -86,30 +88,43 @@ def transform_municipios(municipios: pd.DataFrame) -> pd.DataFrame:
 
 def transform_populacao(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Transforma os dados de população.
-
-    Returns:
-        pd.DataFrame: População por município e ano.
+    Transforma dados de população.
     """
-    return df[["id_municipio", "populacao", "ano"]].drop_duplicates()
+    populacao = df.copy()
 
+    populacao["id_municipio"] = populacao["id_municipio"].astype(int)
+    populacao["populacao"] = populacao["populacao"].astype(int)
+    populacao["ano"] = populacao["ano"].astype(int)
+
+    return populacao[["id_municipio", "populacao", "ano"]]
+
+
+# ============================================================
+# ORQUESTRAÇÃO DA TRANSFORMAÇÃO
+# ============================================================
 
 def run_transformation() -> None:
     """
-    Executa o processo completo de transformação dos dados.
+    Executa a transformação da camada bronze para prata.
     """
     print("Iniciando transformação dos dados...")
 
-    estados_raw = load_parquet("estados.parquet")
-    municipios_raw = load_parquet("municipios.parquet")
-    populacao_raw = load_parquet("populacao_2022.parquet")
-
+    # ESTADOS
+    estados_path = get_latest_partition("estados") / "estados.parquet"
+    estados_raw = pd.read_parquet(estados_path)
     estados = transform_estados(estados_raw)
+    estados.to_parquet("data/prata/estados.parquet", index=False)
+
+    # MUNICÍPIOS
+    municipios_path = get_latest_partition("municipios") / "municipios.parquet"
+    municipios_raw = pd.read_parquet(municipios_path)
     municipios = transform_municipios(municipios_raw)
+    municipios.to_parquet("data/prata/municipios.parquet", index=False)
+
+    # POPULAÇÃO
+    populacao_path = get_latest_partition("populacao") / "populacao_2022.parquet"
+    populacao_raw = pd.read_parquet(populacao_path)
     populacao = transform_populacao(populacao_raw)
+    populacao.to_parquet("data/prata/populacao.parquet", index=False)
 
-    save_parquet(estados, "estados.parquet")
-    save_parquet(municipios, "municipios.parquet")
-    save_parquet(populacao, "populacao.parquet")
-
-    print("Transformação finalizada com sucesso.")
+    print("Transformação concluída com sucesso.")

@@ -7,8 +7,8 @@ from datetime import datetime
 
 from src.extract.ibge_api import run_extraction
 from src.transform.transform_data import run_transformation
-from src.transform.build_gold import run_gold
-from src.load.load_sqlite import run_load
+from src.load.load_sqlite import run_load_sqlite
+from src.load.generate_gold import run_gold_generation
 
 
 def run_pipeline() -> None:
@@ -31,11 +31,11 @@ def run_pipeline() -> None:
         print("\n[2/3] Transformação de dados")
         run_transformation()
 
-        print("\n[2/3] Consolidando dados")
-        run_gold()
+        print("\n[2/3] Carregando dados")
+        run_load_sqlite()
 
         print("\n[3/3] Carga no banco analítico")
-        run_load()
+        run_gold_generation()
 
         end_time = datetime.now()
         duration = end_time - start_time
