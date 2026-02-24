@@ -1,4 +1,4 @@
 #!/bin/bash
 cd /c/Users/Renato/Desktop/PopulacaoSenac
 source venv/Scripts/activate
-python src/pipeline.py
+python -m src.pipeline

@@ -5,6 +5,16 @@ from pathlib import Path
 BRONZE_PATH = Path("data/bronze")
 PRATA_PATH = Path("data/prata")
 
+def extract_id_estado(microrregiao: dict | None) -> int | None:
+    """
+    Extrai o id do estado a partir da estrutura de microrregião.
+    Retorna None caso a estrutura esteja incompleta.
+    """
+    try:
+        return microrregiao["mesorregiao"]["UF"]["id"]
+    except (TypeError, KeyError):
+        return None
+
 
 def load_parquet(filename: str) -> pd.DataFrame:
     """
@@ -50,25 +60,28 @@ def transform_estados(df: pd.DataFrame) -> pd.DataFrame:
     return estados.drop_duplicates()
 
 
-def transform_municipios(df: pd.DataFrame) -> pd.DataFrame:
+def transform_municipios(municipios: pd.DataFrame) -> pd.DataFrame:
     """
-    Transforma os dados brutos de municípios.
-
-    Returns:
-        pd.DataFrame: Municípios normalizados.
+    Transforma os dados de municípios, extraindo id do estado
+    e normalizando os campos principais.
     """
-    municipios = df[["id", "nome", "microrregiao"]].copy()
 
-    municipios["id_estado"] = municipios["microrregiao"].apply(
-        lambda x: x["mesorregiao"]["UF"]["id"]
+    municipios = municipios.copy()
+
+    # Criação da coluna id_estado
+    municipios["id_estado"] = municipios["microrregiao"].apply(extract_id_estado)
+
+    #remover registros sem vínculo com estado
+    municipios = municipios.dropna(subset=["id_estado"])
+
+    municipios = municipios.rename(
+        columns={
+            "id": "id_municipio",
+            "nome": "nome_municipio",
+        }
     )
 
-    municipios.rename(columns={
-        "id": "id_municipio",
-        "nome": "nome_municipio"
-    }, inplace=True)
-
-    return municipios[["id_municipio", "nome_municipio", "id_estado"]].drop_duplicates()
+    return municipios[["id_municipio", "nome_municipio", "id_estado"]]
 
 
 def transform_populacao(df: pd.DataFrame) -> pd.DataFrame:
